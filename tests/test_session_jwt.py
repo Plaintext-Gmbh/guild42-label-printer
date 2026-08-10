@@ -260,6 +260,27 @@ def test_hs256_mit_dem_oeffentlichen_schluessel_wird_abgewiesen(umgebung):
     assert onboard(client, header + "." + rumpf + "." + signatur).status_code == 409
 
 
+@pytest.mark.parametrize("behauptet", ["none", "HS256", "RS512"])
+def test_header_mit_anderer_signaturart_wird_abgewiesen_trotz_gueltiger_rsa_signatur(umgebung, behauptet):
+    """Die Zusage "nur RS256" wird eingehalten, auch wenn die RSA-Signatur stimmt.
+
+    Die beiden Tests darueber (alg=none, HS256) scheitern in Wahrheit schon an der Signaturlaenge —
+    sie belegen die alg-Pruefung also NICHT. Eine Mutationsprobe hat das gezeigt: mit entfernter
+    alg-Pruefung blieben alle 41 Tests gruen. Hier steht deshalb der Fall, den nur sie faengt: ein
+    Token, dessen Header eine andere Signaturart behauptet, dessen RSA-Signatur aber gueltig ist.
+    Wer dem Header spaeter einmal folgt, faellt sonst still in die alg-confusion.
+    """
+    client = umgebung["client"]
+    onboard(client, ausweis())
+
+    jetzt = int(time.time())
+    getarnt = sign({"alg": behauptet, "typ": "JWT"},
+                   {"sub": "guild-checkin-desk", "iss": "https://guild.example.invalid",
+                    "aud": "guild42-label-printer", "exp": jetzt + 900})
+
+    assert onboard(client, getarnt).status_code == 409
+
+
 def test_abgelaufener_ausweis_wird_abgewiesen(umgebung):
     client = umgebung["client"]
     onboard(client, ausweis(jti="alt"))
