@@ -34,7 +34,7 @@ try:
 except ImportError:  # api.py removed or dependencies missing - the kiosk keeps working
     pass
 
-# Optional printer simulator (simulator.py). Enabled only with PRINTER_SIM=1 — an installation
+# Optional printer simulator (simulator.py). Active when no printer is attached — an installation
 # next to real hardware is byte-for-byte unaffected, the /sim routes then answer 404.
 try:
     from simulator import sim_bp, sim_enabled, record_print
@@ -48,8 +48,26 @@ except ImportError:  # simulator.py absent - hardware-only installation, as befo
         raise RuntimeError('simulator not available')
 
 PRINTER_MODEL = 'QL-820NWB'
-PRINTER_URI   = '/dev/usb/lp0'
+PRINTER_URI   = os.environ.get('PRINTER_URI', '/dev/usb/lp0')
 LABEL_SIZE    = '62'
+
+_hardware_da = None
+
+
+def hardware_vorhanden(neu_pruefen: bool = False) -> bool:
+    """Is there a real printer on this machine? Decided by the device node being there.
+
+    CHECKED ONCE, AT STARTUP, AND THEN REMEMBERED — and that is the whole point of the flag.
+    Checking per print would look more current and would be a trap: unplug the printer during an
+    event and every following badge would quietly go to the simulator, with ``accepted`` in the
+    response and nothing on paper. A machine that started with a printer stays a printing
+    machine and reports an error when the device is gone. Being wrong loudly beats being wrong
+    silently at a check-in desk.
+    """
+    global _hardware_da
+    if _hardware_da is None or neu_pruefen:
+        _hardware_da = os.path.exists(PRINTER_URI)
+    return _hardware_da
 
 SUBTITLES = [
     'Guild42.ch',
@@ -88,16 +106,40 @@ def set_active_subtitle(subtitle):
         f.write(subtitle)
 
 
+def _fitting_font(draw, text, path, start_size, min_size, max_width):
+    """The largest of the given font sizes at which ``text`` still fits into ``max_width``.
+
+    WHY MEASURE INSTEAD OF COUNTING CHARACTERS: a character limit is a guess about width, and it
+    is a bad one — "Willi" and "Wamburu" have the same length and nowhere near the same width at
+    80px. The limit stays (it is what an operator can reason about at the kiosk), but the label
+    itself is protected by the only thing that actually knows: the rendered width.
+    """
+    size = start_size
+    while size > min_size:
+        try:
+            font = ImageFont.truetype(path, size)
+        except Exception:
+            return ImageFont.load_default()
+        if draw.textlength(text, font=font) <= max_width:
+            return font
+        size -= 2
+    try:
+        return ImageFont.truetype(path, min_size)
+    except Exception:
+        return ImageFont.load_default()
+
+
+FONT_BOLD = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
+FONT_REGULAR = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+
+
 def create_label_image(name, subtitle='Guild42.ch'):
     W, H = 696, 271
+    MARGIN = 20                       # ink this close to the edge is cut off by the roll
     img = Image.new('RGB', (W, H), 'white')
     draw = ImageDraw.Draw(img)
-    try:
-        font_name = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 80)
-        font_sub = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 40)
-    except Exception:
-        font_name = ImageFont.load_default()
-        font_sub = font_name
+    font_name = _fitting_font(draw, name, FONT_BOLD, 80, 34, W - 2 * MARGIN)
+    font_sub = _fitting_font(draw, subtitle, FONT_REGULAR, 40, 18, W - 2 * MARGIN)
     draw.rectangle([0, 0, W, 18], fill='#1a1a2e')
     draw.text((W // 2, 120), name, font=font_name, fill='black', anchor='mm')
     draw.text((W // 2, 210), subtitle, font=font_sub, fill='#555555', anchor='mm')
@@ -115,6 +157,21 @@ MAX_NAME = 15
 MAX_SUBTITLE = 50
 
 
+def max_name():
+    """The character limit, overridable per installation via ``MAX_NAME``.
+
+    WHY IT IS NOW A SETTING: guild42 makes the limit configurable per tenant, and a caller that
+    is allowed to ask for 25 characters must not have them silently cut to 15 here. Read per call
+    like the other .env-backed values, so no restart semantics need explaining. Long names no
+    longer run off the paper either way — ``create_label_image`` scales the text down to fit.
+    """
+    try:
+        wert = int(os.environ.get('MAX_NAME', MAX_NAME))
+    except ValueError:
+        return MAX_NAME
+    return min(max(wert, 1), 40)
+
+
 @app.route('/')
 def index():
     # get_active_subtitle() statt get_default_subtitle(): der zuletzt gesetzte Anlass gilt fuer die
@@ -123,7 +180,7 @@ def index():
     return render_template('index.html',
                            default_subtitle=get_active_subtitle(),
                            subtitles=SUBTITLES,
-                           max_name=MAX_NAME,
+                           max_name=max_name(),
                            sim=sim_enabled())
 
 
@@ -162,7 +219,7 @@ def session_status():
 @app.route('/print', methods=['POST'])
 def print_label():
     data = request.get_json()
-    name = (data.get('name') or '').strip()[:MAX_NAME]
+    name = (data.get('name') or '').strip()[:max_name()]
     subtitle = (data.get('subtitle') or get_active_subtitle()).strip()[:MAX_SUBTITLE]
     if not name:
         return jsonify({'error': 'Name is required'}), 400
