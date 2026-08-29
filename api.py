@@ -115,10 +115,11 @@ def _session_matches() -> bool:
         return False
     return _selbe_identitaet(_ausweis(presented), gespeichert)
 
-# Same limits as the web UI in app.py — the API must not be able to produce labels the kiosk
-# cannot, otherwise the two paths drift apart.
-MAX_NAME = 40
-MAX_SUBTITLE = 50
+# The label limits are NOT repeated here. They belong to the rendering and live in app.py; this
+# module imports them where it needs them (see print_label). The duplicate that used to sit here
+# is the reason for the rule: the kiosk went 40 -> 12 -> 15 upstream and this copy stayed at 40,
+# so the API printed names the kiosk refused and the label overflowed. A copy of a constraint is
+# a constraint that will be wrong one day.
 
 
 def _env(key: str, default: str = "") -> str:
@@ -311,6 +312,74 @@ def session_info():
     return jsonify(session_status()), 200
 
 
+def simulation_aktiv() -> bool:
+    """Is this process the simulator? Import-safe: a hardware-only install has no simulator.py.
+
+    Mirrors the guarded import in ``health()`` — the same question, asked the same way, so the
+    two cannot drift apart.
+    """
+    try:
+        from simulator import sim_enabled
+        return sim_enabled()
+    except ImportError:
+        return False
+
+
+def force_release() -> dict | None:
+    """Drop the running session WITHOUT presenting its token.
+
+    Callers must have established that this is the simulator. The function itself does not check
+    — it is the mechanism, not the permission — so both entry points (this blueprint and the
+    ``/sim`` page) share one implementation instead of two that drift.
+
+    :return: the numbers of the released session, or ``None`` if none was running
+    """
+    global _session
+    with _session_lock:
+        if _session is None:
+            return None
+        freigegeben = {"prints": _session["prints"], "since": int(_session["started"])}
+        _session = None
+    return freigegeben
+
+
+@api_bp.post("/session/reset")
+def reset_session():
+    """Release a stuck session — SIMULATION ONLY.
+
+    WHY THIS IS NOT THE ADMIN OVERRIDE THAT WAS REJECTED (decision 07.08.2026). On hardware the
+    rule stands and this route does not exist: it answers 404 exactly as an unknown path does, so
+    a device installation cannot be talked into a takeover. The exclusive session protects a
+    physical thing — one printer, one roll of labels, one desk that may feed it. None of that is
+    present in the simulator: there is no device, and a second caller can at worst overwrite a
+    PNG in a bounded in-memory buffer.
+
+    WHAT IT COSTS TO NOT HAVE IT. The session lives in memory and dies with the process, so the
+    documented way out of a forgotten session is a restart. For the Pi that is a deliberate
+    hurdle, standing right next to the person who owns the printer. For the simulator it is
+    absurd: the channel of printer-int had been held since 21.08.2026 by a sender whose token no
+    longer existed anywhere, and the guild settings page could only say "release it at the
+    device" about a container in a rack. Whoever wanted to test had to have NAS access and
+    restart a container — for a test system that is the wrong price, and it is the reason this
+    route exists (Daniel, 29.08.2026: "baue ev ein reset in den sim modus ein").
+
+    Still behind the token guard of this blueprint: simulation is not the same as public.
+    """
+    if not simulation_aktiv():
+        # Deliberately the same answer as an unknown route, not 403: on hardware this endpoint
+        # must not even reveal that it is a thing that could be switched on.
+        return jsonify({"error": "not_found"}), 404
+    freigegeben = force_release()
+    if freigegeben is None:
+        # Not an error: "the channel is free" is exactly what the caller wanted. Answering 404
+        # here would send them looking for a problem that has already been solved.
+        log.info("api: session reset requested (simulation) — nothing was running")
+        return jsonify({"ok": True, "released": False}), 200
+    log.info("api: session reset (simulation) after %d prints, requested via token '%s'",
+             freigegeben["prints"], request.environ.get("api.token_label", "?"))
+    return jsonify({"ok": True, "released": True, **freigegeben}), 200
+
+
 @api_bp.get("/health")
 def health():
     """Can we reach the printer device at all? Lets a caller check before promising anything."""
@@ -345,7 +414,8 @@ def print_label():
 
     Returns ``accepted``, never ``printed`` — see the module docstring.
     """
-    from app import LABEL_SIZE, PRINTER_MODEL, PRINTER_URI, create_label_image, get_default_subtitle
+    from app import (LABEL_SIZE, MAX_NAME, MAX_SUBTITLE, PRINTER_MODEL, PRINTER_URI,
+                     create_label_image, get_active_subtitle)
 
     # While a session is running the printer belongs to it: the session token has to come along,
     # in X-Session-Token. Without a session nothing changes - callers with a static token print
@@ -360,7 +430,11 @@ def print_label():
 
     data = request.get_json(silent=True) or {}
     name = (data.get("name") or "").strip()[:MAX_NAME]
-    subtitle = (data.get("subtitle") or get_default_subtitle()).strip()[:MAX_SUBTITLE]
+    # get_active_subtitle(), nicht get_default_subtitle(): Seit upstream f8c829c gilt der
+    # zuletzt gesetzte Anlass fuer die ganze Laufzeit, und der Kiosk benutzt ihn. Bliebe hier
+    # der .env-Vorgabewert stehen, truege ein ueber die API gedrucktes Schild den falschen
+    # Anlass — und das sind bei guild42 gerade die Schilder vom Check-in.
+    subtitle = (data.get("subtitle") or get_active_subtitle()).strip()[:MAX_SUBTITLE]
     if not name:
         return jsonify({"error": "name_required"}), 400
 

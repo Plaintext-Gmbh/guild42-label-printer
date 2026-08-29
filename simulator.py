@@ -31,6 +31,15 @@ _prints = []          # newest last: {"id", "name", "subtitle", "source", "ts", 
 _ids = itertools.count(1)
 MAX_PRINTS = 50       # ~50 labels x ~10 KB PNG — bounded by design
 
+# WHY A RUN TOKEN: print ids restart at 1 with the process, so ``/sim/label/2.png`` stands for a
+# different label after every restart. The no-store headers below fixed what the CDN made of
+# that; they cannot fix what a browser already holds from an earlier run. Measured 29.08.2026 on
+# printer-int.guild42.ch: a fresh print showed up with the correct footer (#2, 15:59:41) and the
+# PICTURE of a test label printed two weeks earlier under the same id. The token goes into the
+# image URL, so a new run asks for genuinely new addresses instead of hoping nobody cached the
+# old ones.
+_RUN = os.urandom(4).hex()
+
 
 def sim_enabled() -> bool:
     """``PRINTER_SIM=1`` switches the hardware path off. Read per call, like ``.env`` values
@@ -57,7 +66,9 @@ def record_print(image, name: str, subtitle: str, source: str) -> int:
 
 
 def _public(entry: dict) -> dict:
-    return {k: entry[k] for k in ("id", "name", "subtitle", "source", "ts")}
+    public = {k: entry[k] for k in ("id", "name", "subtitle", "source", "ts")}
+    public["run"] = _RUN
+    return public
 
 
 @sim_bp.get("")
@@ -82,6 +93,42 @@ def sim_prints():
         fresh = [_public(e) for e in _prints if e["id"] > since]
         total = _prints[-1]["id"] if _prints else 0
     return jsonify({"prints": fresh, "latest": total})
+
+
+@sim_bp.get("/session")
+def sim_session():
+    """State of the exclusive channel, for the panel on the page.
+
+    The same numbers ``GET /api/v1/session`` returns, but without a token: this page is already
+    unauthenticated and shows the printed labels themselves. Withholding "a session is running"
+    from someone who can read the names on the labels would protect nothing.
+    """
+    if not sim_enabled():
+        abort(404)
+    from api import session_status
+    return jsonify(session_status())
+
+
+@sim_bp.post("/session/reset")
+def sim_session_reset():
+    """Release the channel from the simulator page.
+
+    WHY THIS BUTTON IS HERE AND NOT ONLY IN THE API. The stuck channel is discovered by whoever
+    is testing — at the guild settings page or here — and until now their only remedy was a
+    restart of this container, which needs NAS access. The people who test check-in are not the
+    people with a shell on the NAS. A remedy that only the operator can apply is, for a test
+    system, no remedy.
+
+    It carries no token, like the rest of this blueprint, and that is defensible for exactly the
+    same reason: it exists only under ``PRINTER_SIM=1``, where there is no device to protect. On
+    hardware ``sim_enabled()`` is false and this route answers 404 like any unknown path.
+    """
+    if not sim_enabled():
+        abort(404)
+    from api import force_release
+    freigegeben = force_release()
+    return jsonify({"ok": True, "released": freigegeben is not None,
+                    "prints": (freigegeben or {}).get("prints", 0)})
 
 
 @sim_bp.get("/label/<int:print_id>.png")

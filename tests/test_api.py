@@ -110,13 +110,26 @@ def test_name_ist_pflicht(umgebung):
 
 
 def test_name_wird_wie_im_kiosk_gekuerzt(umgebung):
-    """Both paths must produce the same label — otherwise they drift apart."""
+    """Both paths must produce the same label — otherwise they drift apart.
+
+    Deliberately measured against ``app.MAX_NAME`` and not against a number written here: this
+    test held the number 40 while the kiosk moved to 12 and then to 15, and it stayed green the
+    whole time. A test that carries its own copy of the constraint proves the copy, not the
+    constraint.
+    """
+    import app as kiosk
+
     client, tokens, _ = umgebung
     _mit_token(tokens)
     with mock.patch("brother_ql.backends.helpers.send"):
         antwort = client.post("/api/v1/print", json={"name": "A" * 100},
                               headers={"Authorization": f"Bearer {TOKEN}"})
-    assert len(antwort.get_json()["name"]) == 40
+    assert len(antwort.get_json()["name"]) == kiosk.MAX_NAME
+
+    # Gegenprobe ueber den Kiosk-Weg: beide kuerzen gleich, nicht nur beide irgendwie.
+    with mock.patch("brother_ql.backends.helpers.send"):
+        ueber_kiosk = client.post("/print", json={"name": "A" * 100})
+    assert ueber_kiosk.get_json()["name"] == antwort.get_json()["name"]
 
 
 def test_fehlendes_geraet_gibt_503(umgebung):
@@ -279,6 +292,60 @@ def test_offboarding_nur_mit_dem_session_token(umgebung):
     assert client.delete("/api/v1/session", headers=KOPF).status_code == 403
     assert client.delete("/api/v1/session",
                          headers={**KOPF, "X-Session-Token": "falsch"}).status_code == 403
+    assert client.get("/api/v1/session", headers=KOPF).get_json()["connected"] is True
+
+
+def test_reset_gibt_es_auf_hardware_nicht(umgebung):
+    """The rejected admin override must not sneak in through the back door.
+
+    Without PRINTER_SIM the route answers 404 like an unknown path — not 403, which would admit
+    it exists — and the running session is untouched afterwards.
+    """
+    client, tokens, _ = umgebung
+    _mit_token(tokens)
+    _onboard(client)
+    antwort = client.post("/api/v1/session/reset", headers=KOPF)
+    assert antwort.status_code == 404
+    assert antwort.get_json() == {"error": "not_found"}
+    assert client.get("/api/v1/session", headers=KOPF).get_json()["connected"] is True
+
+
+def test_reset_gibt_den_kanal_in_der_simulation_frei(umgebung, monkeypatch):
+    client, tokens, _ = umgebung
+    _mit_token(tokens)
+    _onboard(client)
+    monkeypatch.setenv("PRINTER_SIM", "1")
+
+    antwort = client.post("/api/v1/session/reset", headers=KOPF)
+
+    assert antwort.status_code == 200
+    assert antwort.get_json()["released"] is True
+    assert client.get("/api/v1/session", headers=KOPF).get_json()["connected"] is False
+    # Und danach ist der Kanal wirklich frei, nicht nur laut Auskunft.
+    zweite, _ = _onboard(client)
+    assert zweite.status_code == 201
+
+
+def test_reset_ohne_laufende_sitzung_ist_kein_fehler(umgebung, monkeypatch):
+    """"The channel is free" is what the caller wanted — a 404 would send them hunting."""
+    client, tokens, _ = umgebung
+    _mit_token(tokens)
+    monkeypatch.setenv("PRINTER_SIM", "1")
+
+    antwort = client.post("/api/v1/session/reset", headers=KOPF)
+
+    assert antwort.status_code == 200
+    assert antwort.get_json() == {"ok": True, "released": False}
+
+
+def test_reset_braucht_trotz_simulation_einen_token(umgebung, monkeypatch):
+    """Simulation is not the same as public: the blueprint guard still applies."""
+    client, tokens, _ = umgebung
+    _mit_token(tokens)
+    _onboard(client)
+    monkeypatch.setenv("PRINTER_SIM", "1")
+
+    assert client.post("/api/v1/session/reset").status_code == 401
     assert client.get("/api/v1/session", headers=KOPF).get_json()["connected"] is True
 
 

@@ -25,12 +25,14 @@ Hardware kindly provided by [Zooey.ch](https://zooey.ch).
 
 ## Hardware Requirements
 
-| Component | Specification |
-|-----------|--------------|
-| Single-board computer | Raspberry Pi 3B+ or 4 (64-bit OS) |
-| Label printer | Brother QL-820NWBc |
-| Label roll | DK-22205 (62mm continuous white paper) |
-| Connection | USB (printer connected directly to Pi) |
+| Component | Specification | Owner |
+|-----------|--------------|-------|
+| Single-board computer | Raspberry Pi 3B+ or 4 (64-bit OS) | Guild42.ch |
+| Label printer | Brother QL-820NWBc | Zooey.ch (donated) |
+| Label roll | DK-22205 (62mm continuous white paper) | Guild42.ch |
+| Connection | USB (printer connected directly to Pi) | — |
+| 4G USB Dongle | Brovi E3372-325 (HiLink mode, usb0) | Guild42.ch |
+| SIM card | Migros Mobile prepaid | Guild42.ch |
 
 ---
 
@@ -159,7 +161,15 @@ sudo systemctl enable cloudflared
 sudo systemctl start cloudflared
 ```
 
-### 8. Configure WiFi failover
+### 8. Configure network failover
+
+The Pi supports three network connections with automatic priority-based failover:
+
+| Network | Priority | Use case |
+|---------|----------|---------|
+| iPhone hotspot | 50 | Primary at events |
+| 4G Dongle (Brovi E3372-325) | 30 | Fallback at events |
+| Home WiFi | 10 | Development / storage |
 
 ```bash
 # Add event hotspot with high priority
@@ -167,10 +177,18 @@ sudo nmcli dev wifi connect 'YOUR-HOTSPOT-SSID' password 'YOUR-PASSWORD'
 sudo nmcli con modify 'YOUR-HOTSPOT-SSID' connection.autoconnect-priority 50
 sudo nmcli con modify 'YOUR-HOTSPOT-SSID' connection.autoconnect yes
 
+# Configure 4G dongle (appears as usb0 in HiLink mode)
+# Enter SIM PIN via browser at http://192.168.8.1
+sudo nmcli con modify 'Wired connection 1' connection.autoconnect-priority 30
+sudo nmcli con modify 'Wired connection 1' connection.autoconnect yes
+
 # Set home network to lower priority
 sudo nmcli con modify 'YOUR-HOME-SSID' connection.autoconnect-priority 10
 sudo nmcli con modify 'YOUR-HOME-SSID' connection.autoconnect yes
 ```
+
+**4G Dongle setup:**
+The Brovi E3372-325 runs in HiLink mode and appears as a USB ethernet adapter (`usb0`). To enter the SIM PIN or check connection status, open `http://192.168.8.1` in a browser while connected to the Pi's network.
 
 ### 9. Generate the QR code
 
@@ -262,6 +280,7 @@ Both require `Authorization: Bearer <token>`.
 | `POST` | `/api/v1/session` | **Onboarding** — claim the printer for one caller. Returns the session token once. |
 | `DELETE` | `/api/v1/session` | **Offboarding** — release it again. Requires the session token. |
 | `GET` | `/api/v1/session` | Is a session running, and how many badges has it printed? |
+| `POST` | `/api/v1/session/reset` | **Simulation only** — release a stuck session without its token. `404` on hardware. |
 
 ```bash
 curl -X POST https://printer.example.ch/api/v1/print \
@@ -309,6 +328,26 @@ Four properties, and the reasoning behind each:
 
 The kiosk page shows a small line while a session is connected, including how many badges it has
 printed. It is display only — there are no controls, and the session token is never shown.
+
+##### The one exception: a reset in the simulator
+
+`POST /api/v1/session/reset` releases a running session **without** its token, and the `/sim` page
+carries a *Release channel* button that does the same. Both exist **only under `PRINTER_SIM=1`**;
+on hardware they answer `404` like any unknown path, so the rule above is untouched where it
+matters.
+
+The reason for the exception is that the third property costs something quite different in the two
+places. On the Pi, "restart the service" is a deliberate hurdle standing next to the person who
+owns the printer. On the simulator it is a container in a rack: the channel of `printer-int` was
+held from 21. to 29.08.2026 by a caller whose token no longer existed anywhere, and the guild
+settings page could only advise to "release it at the device". Whoever tests check-in then needs
+NAS access to restart a container — for a test system that is the wrong price for a rule that
+protects nothing there. There is no device in simulation, no roll of labels, and a second caller
+can at worst overwrite a PNG in a bounded in-memory buffer.
+
+The API route stays behind the normal token guard; simulation is not the same as public. The
+button on `/sim` carries no token, like the rest of that page — which already shows the printed
+labels themselves, names included.
 
 #### Signed session tokens (optional) — surviving a restart of the caller
 

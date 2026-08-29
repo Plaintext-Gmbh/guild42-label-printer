@@ -30,6 +30,36 @@ def test_sim_disabled_hides_routes(client, monkeypatch):
     assert client.get("/sim").status_code == 404
     assert client.get("/sim/prints").status_code == 404
     assert client.get("/sim/label/1.png").status_code == 404
+    # Der Kanal-Reset gehoert dazu: Er darf auf einem Geraet nicht einmal existieren.
+    assert client.get("/sim/session").status_code == 404
+    assert client.post("/sim/session/reset").status_code == 404
+
+
+def test_kanal_reset_auf_der_sim_seite(client):
+    """The button on /sim releases a stuck channel — the point of the whole addition.
+
+    Why it matters: the session lives in memory and the documented way out is a restart of the
+    process. On the Pi that is a deliberate hurdle. On a container in a rack it means whoever
+    tests check-in needs NAS access, and printer-int sat blocked from 21. to 29.08.2026 for
+    exactly that reason.
+    """
+    import api
+    api._session = {"digest": "egal", "started": 0, "prints": 3, "identity": None}
+
+    zustand = client.get("/sim/session").get_json()
+    assert zustand["connected"] is True and zustand["prints"] == 3
+
+    antwort = client.post("/sim/session/reset")
+    assert antwort.status_code == 200
+    assert antwort.get_json() == {"ok": True, "released": True, "prints": 3}
+    assert client.get("/sim/session").get_json()["connected"] is False
+
+
+def test_kanal_reset_ohne_sitzung_meldet_frei(client):
+    import api
+    api._session = None
+    assert client.post("/sim/session/reset").get_json() == {"ok": True, "released": False,
+                                                            "prints": 0}
 
 
 def test_kiosk_print_lands_in_simulator(client):
@@ -63,6 +93,28 @@ def test_label_is_never_cached(client):
     steuerung = antwort.headers.get("Cache-Control", "")
     assert "no-store" in steuerung, f"Cache-Control ohne no-store: {steuerung!r}"
     assert "max-age=31536000" not in steuerung
+
+
+def test_label_url_is_unique_per_run(client):
+    """The id alone is not a unique address: it restarts at 1 with the process.
+
+    Daniel, 29.08.2026: a freshly printed label showed up in the tray with the right footer
+    (#2, 15:59:41) and the picture of a test label printed two weeks earlier — the browser still
+    had /sim/label/2.png from that older run. Headers alone cannot repair a cache entry that is
+    already there, so every print carries a run token and the page puts it into the URL.
+    """
+    import simulator
+
+    client.post("/print", json={"name": "Lauf"})
+    eintrag = client.get("/sim/prints").get_json()["prints"][0]
+
+    assert eintrag["run"] == simulator._RUN
+    assert eintrag["run"], "leerer Run-Token — die Adresse waere wieder nur die id"
+    # GEGENPROBE: ein neuer Prozess erzeugt einen anderen Token, sonst bringt er nichts.
+    assert simulator.os.urandom(4).hex() != simulator._RUN
+    # und die Seite baut die Adresse auch wirklich damit
+    seite = client.get("/sim").data
+    assert b"labelUrl" in seite and b"p.run" in seite
 
 
 def test_label_belongs_to_its_id(client):
