@@ -30,6 +30,7 @@ services:
 
     volumes:
       # REST API: one bearer token per line ("<sha256> <label>"), see api_tokens.txt.example.
+      # The container runs as uid 1013: the file must be readable for it (e.g. chgrp 1013, 0640).
       # No file, no API — every /api/v1/* route answers 404 instead of 401.
       - ./api_tokens.txt:/opt/printer/api_tokens.txt:ro
       # Optional: DEFAULT_SUBTITLE=... for the line under the name.
