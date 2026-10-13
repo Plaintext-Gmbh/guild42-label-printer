@@ -380,6 +380,71 @@ def reset_session():
     return jsonify({"ok": True, "released": True, **freigegeben}), 200
 
 
+# ── Mode switch legacy/neu (Daniel, 13.10.2026) ─────────────────────────────────────────────
+#
+# On the Pi, nginx sends printer.guild42.ch either to Simon's nametag (legacy) or to this
+# container (neu); /etc/nginx/printer/active.conf is a symlink to upstream-<mode>.conf. Switching
+# needs root, this process has none - so it only WRITES A WISH, and a systemd path unit on the
+# host applies and deletes it. Both paths come from the environment; without them (printer-int,
+# the simulator on the NAS) there is nothing to switch: umschaltbar false, POST 409.
+MODI = ("legacy", "neu")
+
+
+def _modus_pfade() -> tuple:
+    return _env("PRINTER_MODE_LINK"), _env("PRINTER_MODE_WISH")
+
+
+def aktueller_modus():
+    """The mode nginx routes to, or ``None`` if the link cannot be read or named."""
+    link, _ = _modus_pfade()
+    if not link:
+        # No link to read: nothing in front of us switches - whoever reaches this API reaches this
+        # container.
+        return "neu"
+    try:
+        ziel = os.path.basename(os.readlink(link))
+    except OSError as exc:
+        log.warning("api: mode link not readable: %s", exc)
+        return None
+    for modus in MODI:
+        if ziel == "upstream-%s.conf" % modus:
+            return modus
+    return None
+
+
+def modus_umschaltbar() -> bool:
+    link, wunsch = _modus_pfade()
+    return bool(link and wunsch) and os.path.isdir(os.path.dirname(wunsch))
+
+
+@api_bp.get("/modus")
+def modus_lesen():
+    return jsonify({"modus": aktueller_modus(), "umschaltbar": modus_umschaltbar()}), 200
+
+
+@api_bp.post("/modus")
+def modus_setzen():
+    data = request.get_json(silent=True) or {}
+    modus = data.get("modus")
+    if modus not in MODI:
+        return jsonify({"error": "invalid_mode"}), 400
+    if not modus_umschaltbar():
+        return jsonify({"error": "not_switchable"}), 409
+    _, wunsch = _modus_pfade()
+    # Write next to the target and rename: the path unit must never read a half-written file.
+    temp = "%s.%d.tmp" % (wunsch, os.getpid())
+    try:
+        with open(temp, "w") as handle:
+            handle.write(modus)
+        os.replace(temp, wunsch)
+    except OSError as exc:
+        log.warning("api: mode wish not written: %s", exc)
+        return jsonify({"error": "not_switchable"}), 409
+    log.info("api: mode switch to '%s' requested via token '%s'", modus,
+             request.environ.get("api.token_label", "?"))
+    return jsonify({"ok": True, "wunsch": modus}), 202
+
+
 @api_bp.get("/health")
 def health():
     """Can we reach the printer device at all? Lets a caller check before promising anything."""
