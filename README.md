@@ -314,6 +314,8 @@ Both require `Authorization: Bearer <token>`.
 | `DELETE` | `/api/v1/session` | **Offboarding** — release it again. Requires the session token. |
 | `GET` | `/api/v1/session` | Is a session running, and how many badges has it printed? |
 | `POST` | `/api/v1/session/reset` | **Simulation only** — release a stuck session without its token. `404` on hardware. |
+| `GET` | `/api/v1/modus` | Which app nginx routes to on the Pi: `{"modus": "legacy"\|"neu"\|null, "umschaltbar": true\|false}`. |
+| `POST` | `/api/v1/modus` | Request a switch: `{"modus": "legacy"}` or `"neu"` → `202`; other values `400`; not switchable here `409`. |
 
 ```bash
 curl -X POST https://printer.example.ch/api/v1/print \
@@ -419,6 +421,20 @@ Deliberate limits:
 
 No new dependency: verification is a modular exponentiation plus a byte comparison from the
 standard library.
+
+### Mode switch legacy / neu (Raspberry Pi)
+
+On the Pi, nginx routes the public address either to the legacy nametag app or to this container,
+via the symlink `/etc/nginx/printer/active.conf` → `upstream-<mode>.conf`. Switching needs root,
+so the API only **writes a wish** (`legacy` or `neu`, atomically via rename) and a systemd path
+unit on the host applies and deletes it. Two environment variables, both required:
+
+```
+PRINTER_MODE_LINK=/opt/printer/modus/active.conf   # -v /etc/nginx/printer:/opt/printer/modus:ro
+PRINTER_MODE_WISH=/run/printer-mode/wunsch         # -v /run/printer-mode:/run/printer-mode (root:1013 0770)
+```
+
+Without them (e.g. the simulator on the NAS) `umschaltbar` is `false` and `POST` answers `409`.
 
 ### What a success response does and does not mean
 
