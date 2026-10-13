@@ -1,3 +1,7 @@
 # /etc/udev/rules.d/99-brother-ql.rules
 # Grant access to the Brother QL-820NWBc USB device for the lp group.
 SUBSYSTEM=="usb", ATTRS{idVendor}=="04f9", ATTRS{idProduct}=="209d", MODE="0664", GROUP="lp"
+# The device node the app writes to (/dev/usb/lp0, usblp) is a separate udev device in the
+# usbmisc subsystem; the rule above does not reach it. Without this it stays root:root 0600 and
+# the container (uid 1013, group_add "lp") cannot print.
+SUBSYSTEM=="usbmisc", KERNEL=="lp[0-9]*", ATTRS{idVendor}=="04f9", MODE="0660", GROUP="lp"
