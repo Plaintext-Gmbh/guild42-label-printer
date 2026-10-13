@@ -79,6 +79,7 @@ button.print-btn:disabled { opacity: 0.4; cursor: not-allowed; }
     <span id="session-text"></span>
   </div>
 
+  {% if not event %}
   <div class="admin-toggle">
     <button onclick="toggleAdmin()">⚙</button>
   </div>
@@ -96,6 +97,7 @@ button.print-btn:disabled { opacity: 0.4; cursor: not-allowed; }
     </div>
     <div class="admin-status" id="admin-status"></div>
   </div>
+  {% endif %}
 </div>
 
 <script>
@@ -122,7 +124,11 @@ async function updateSelected(radio) {
   }
 }
 
+// Event handed over by guild42 (?event=...): fixed for this page, the admin panel is hidden.
+const FIXED_EVENT = {{ event|tojson }};
+
 function getSubtitle() {
+  if (FIXED_EVENT) return FIXED_EVENT;
   const checked = document.querySelector('input[name="subtitle"]:checked');
   return checked ? checked.value : '{{ default_subtitle }}';
 }

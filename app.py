@@ -177,8 +177,13 @@ def index():
     # get_active_subtitle() statt get_default_subtitle(): der zuletzt gesetzte Anlass gilt fuer die
     # ganze Laufzeit (upstream f8c829c). sim= bleibt daneben stehen, das eine sagt WELCHER Anlass,
     # das andere WOHIN gedruckt wird.
+    # ?event=<title>: guild42 sends the desk here after onboarding, with the event chosen there.
+    # It only changes THIS page (preview + the subtitle it sends), never the global runtime.txt -
+    # a GET must not change state for everyone. No new exposure: /print already takes any subtitle.
+    event = (request.args.get('event') or '').strip()[:MAX_SUBTITLE]
     return render_template('index.html',
-                           default_subtitle=get_active_subtitle(),
+                           default_subtitle=event or get_active_subtitle(),
+                           event=event,
                            subtitles=SUBTITLES,
                            max_name=max_name(),
                            sim=sim_enabled())
