@@ -18,6 +18,7 @@ Hardware kindly provided by [Zooey.ch](https://zooey.ch).
 - Multi-event support: Guild42.ch, CH-Open.ch, Workshop-Tage.ch
 - Default event configurable via a single `.env` file
 - Hidden admin panel (⚙) for on-the-fly event switching
+- `/?event=<title>` shows and prints that event on this page only (guild42 redirects the desk here after onboarding); the global event and the admin panel stay untouched
 - Automatic WiFi failover: iPhone hotspot (event) → home network (development)
 - Fully self-managing: auto-start on boot, auto-restart on crash
 
