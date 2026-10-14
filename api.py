@@ -445,6 +445,35 @@ def modus_setzen():
     return jsonify({"ok": True, "wunsch": modus}), 202
 
 
+# ── Global event (Karte 1539, Daniel 14.10.2026) ────────────────────────────────────────────
+#
+# guild42 sets the event of the kiosk for every device when the desk is claimed. Behind the token
+# guard on purpose: the kiosk is public (printer.guild42.ch, no login), so a GET ?event= that wrote
+# runtime.txt would let anyone on the internet relabel every badge. ?event= stays page-local.
+
+
+@api_bp.post("/event")
+def event_setzen():
+    from app import MAX_SUBTITLE, set_active_subtitle
+
+    data = request.get_json(silent=True)
+    titel = data.get("event") if isinstance(data, dict) else None
+    if not isinstance(titel, str):
+        return jsonify({"error": "invalid_event"}), 400
+    # Control characters (newline, tab, ...) out: one line on the label, one line in runtime.txt.
+    titel = "".join(c for c in titel if c.isprintable()).strip()[:MAX_SUBTITLE]
+    if not titel:
+        return jsonify({"error": "invalid_event"}), 400
+    try:
+        set_active_subtitle(titel)
+    except OSError as exc:
+        log.warning("api: event not written: %s", exc)
+        return jsonify({"error": "event_not_saved"}), 500
+    log.info("api: event set (%d chars) via token '%s'", len(titel),
+             request.environ.get("api.token_label", "?"))
+    return jsonify({"ok": True, "active": titel}), 200
+
+
 @api_bp.get("/health")
 def health():
     """Can we reach the printer device at all? Lets a caller check before promising anything."""
