@@ -94,8 +94,10 @@ def get_active_subtitle():
     try:
         with open(RUNTIME_FILE) as f:
             value = f.read().strip()
-            if value in SUBTITLES:
-                return value
+            # Karte 1539: besides the three kiosk buttons, POST /api/v1/event (token only) may store
+            # a free event title here - so any non-empty value counts, capped like every subtitle.
+            if value:
+                return value[:MAX_SUBTITLE]
     except Exception:
         pass
     return get_default_subtitle()

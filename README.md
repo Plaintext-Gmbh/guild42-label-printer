@@ -316,6 +316,7 @@ Both require `Authorization: Bearer <token>`.
 | `POST` | `/api/v1/session/reset` | **Simulation only** — release a stuck session without its token. `404` on hardware. |
 | `GET` | `/api/v1/modus` | Which app nginx routes to on the Pi: `{"modus": "legacy"\|"neu"\|null, "umschaltbar": true\|false}`. |
 | `POST` | `/api/v1/modus` | Request a switch: `{"modus": "legacy"}` or `"neu"` → `202`; other values `400`; not switchable here `409`. |
+| `POST` | `/api/v1/event` | Set the event **globally** (every kiosk page without `?event=`): `{"event": "Guild42 Meetup"}` → `200`. Control characters removed, max. 50 characters; empty/invalid `400`. |
 
 ```bash
 curl -X POST https://printer.example.ch/api/v1/print \
