@@ -35,6 +35,9 @@ EXPOSE 5000
 # The printer device: group_add "lp" in the compose file (see docker-compose.example.yml).
 RUN useradd -u 1013 -U -M -d /nonexistent -s /usr/sbin/nologin printer \
  && touch runtime.txt && chown printer:printer runtime.txt
+# Karte 1466: printer hat kein Home (/nonexistent); gunicorn legt seinen Control-Socket unter $HOME an
+# und meldete sonst bei jedem Start "Permission denied: /nonexistent".
+ENV HOME=/tmp
 USER printer
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \

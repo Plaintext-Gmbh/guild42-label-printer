@@ -547,6 +547,7 @@ def print_label():
         if _session is not None:
             _session["prints"] += 1
 
-    log.info("api: accepted print for '%s' via token '%s'",
-             name, request.environ.get("api.token_label", "?"))
+    # Karte 1466 L1: kein Teilnehmername im Log (landet in docker logs/Graylog); die Laenge reicht.
+    log.info("api: accepted print (%d chars) via token '%s'",
+             len(name), request.environ.get("api.token_label", "?"))
     return jsonify({"ok": True, "accepted": True, "name": name}), 200
