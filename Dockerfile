@@ -9,7 +9,8 @@
 # fonts-dejavu-core: create_label_image() loads DejaVuSans(-Bold).ttf from the Debian font path;
 # without the package Pillow silently falls back to a bitmap font and every label looks wrong.
 
-FROM python:3.12-slim
+# Karte 1466 (F2): Basis per Digest (Multi-Arch-Index, amd64 + arm64 fuer den Pi).
+FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends fonts-dejavu-core curl \
@@ -17,7 +18,7 @@ RUN apt-get update \
 
 WORKDIR /opt/printer
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt gunicorn
+RUN pip install --no-cache-dir -r requirements.txt gunicorn==26.2.0
 
 COPY app.py api.py simulator.py session_jwt.py ./
 COPY templates/ templates/
