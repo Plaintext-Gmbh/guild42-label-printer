@@ -44,3 +44,11 @@ def test_event_parameter_wird_escaped_und_gekuerzt(client):
     assert "</script><b>" not in html
     assert "y" * (kiosk.MAX_SUBTITLE - len("</script><b>x")) in html
     assert "y" * (kiosk.MAX_SUBTITLE - len("</script><b>x") + 1) not in html
+
+
+# Karte 1466 L2: kaputte Bodies sind ein Eingabefehler (400), kein Serverfehler (500).
+@pytest.mark.parametrize("pfad", ["/print", "/set-event"])
+@pytest.mark.parametrize("body", ["null", "[]", "42", "kein json"])
+def test_kaputter_body_gibt_400(client, pfad, body):
+    antwort = client.post(pfad, data=body, content_type="application/json")
+    assert antwort.status_code == 400

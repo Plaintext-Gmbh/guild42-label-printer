@@ -191,8 +191,10 @@ def index():
 
 @app.route('/set-event', methods=['POST'])
 def set_event():
-    data = request.get_json()
-    subtitle = data.get('subtitle', '').strip()
+    # Karte 1466 L2: ein Body `null` oder kein Objekt ergab einen 500; jetzt 400 wie bei falschen Werten.
+    data = request.get_json(silent=True)
+    data = data if isinstance(data, dict) else {}
+    subtitle = (data.get('subtitle') or '').strip()
     if subtitle not in SUBTITLES:
         return jsonify({'error': 'Invalid subtitle'}), 400
     set_active_subtitle(subtitle)
@@ -223,7 +225,8 @@ def session_status():
 
 @app.route('/print', methods=['POST'])
 def print_label():
-    data = request.get_json()
+    data = request.get_json(silent=True)
+    data = data if isinstance(data, dict) else {}
     name = (data.get('name') or '').strip()[:max_name()]
     subtitle = (data.get('subtitle') or get_active_subtitle()).strip()[:MAX_SUBTITLE]
     if not name:
