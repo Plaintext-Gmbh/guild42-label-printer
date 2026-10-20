@@ -9,8 +9,12 @@
 
 set -e
 
-echo "[brother-setup] Stopping ipp-usb..."
-systemctl stop ipp-usb 2>/dev/null || true
+# ipp-usb is a static unit that udev starts via SYSTEMD_WANTS (71-ipp-usb.rules) whenever the
+# printer appears - "disable" does not stop that, and a plain "stop" here can lose the race: on
+# 20.10.2026 it came back 4 s later, took the interface, and /dev/usb/lp0 was gone (503 in both
+# modes). Masking blocks every start path.
+echo "[brother-setup] Masking and stopping ipp-usb..."
+systemctl mask --now ipp-usb.service 2>/dev/null || true
 
 echo "[brother-setup] Reloading usblp kernel module..."
 modprobe -r usblp 2>/dev/null || true

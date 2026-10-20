@@ -147,10 +147,16 @@ open('/opt/brother/PTouch/ql820nwb/lpd/filter_ql820nwb', 'w').write(content)
 
 ```bash
 echo 'usblp' | sudo tee /etc/modules-load.d/usblp.conf
-sudo systemctl disable ipp-usb 2>/dev/null || true
+sudo systemctl mask --now ipp-usb.service   # not "disable": udev starts it via SYSTEMD_WANTS and it steals the printer
 sudo cp scripts/99-brother-ql.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules
 ```
+
+`ipp-usb` must be **masked**. It is a static unit that `/lib/udev/rules.d/71-ipp-usb.rules` starts
+via `SYSTEMD_WANTS` whenever the printer is plugged in or the Pi boots; `disable` has no effect on
+that. If it runs, it claims the printer's IPP-over-USB interface, `usblp` loses the device and
+`/dev/usb/lp0` disappears - every print then fails (`[Errno 2]` in the kiosk, `503
+printer_unavailable` from the API). `scripts/brother-setup.sh` masks it as well.
 
 ### 5. Deploy the web app
 
