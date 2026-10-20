@@ -244,6 +244,12 @@ Available values: `Guild42.ch`, `CH-Open.ch`, `Workshop-Tage.ch`
 
 ---
 
+## Nachmelden redirect
+
+`GET /nachmelden` answers `302` to the late-registration form in guild, by default
+`https://app.guild42.ch/nachmelden`. Override the target with `NACHMELDEN_URL`. No login, and query
+parameters are not passed on.
+
 ## Troubleshooting
 
 **`/dev/usb/lp0` not found after reboot**
