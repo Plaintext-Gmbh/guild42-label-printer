@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template, jsonify
+from flask import Flask, request, render_template, jsonify, redirect
 from brother_ql.conversion import convert
 from brother_ql.backends.helpers import send
 from brother_ql.raster import BrotherQLRaster
@@ -201,6 +201,15 @@ def set_event():
         return jsonify({'error': 'Invalid subtitle'}), 400
     set_active_subtitle(subtitle)
     return jsonify({'ok': True, 'active': subtitle})
+
+
+@app.route('/nachmelden')
+def nachmelden():
+    """Karte 1557: printer.guild42.ch/nachmelden leads to the late-registration form in guild.
+
+    No login and no parameters passed on - the QR code at the desk only needs a stable address.
+    """
+    return redirect(os.environ.get('NACHMELDEN_URL', 'https://app.guild42.ch/nachmelden'), 302)
 
 
 @app.route('/session-status')
