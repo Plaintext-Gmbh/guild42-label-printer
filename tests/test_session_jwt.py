@@ -365,3 +365,18 @@ def test_schluesselwechsel_wird_ohne_neustart_bemerkt(umgebung):
 
     antwort = onboard(client, ausweis(jti="neuer-schluessel", n=N2, d=D2))
     assert antwort.status_code == 200, "Ein zweiter veroeffentlichter Schluessel derselben Instanz gilt auch"
+
+
+def test_jwks_abruf_mit_eigenem_user_agent(monkeypatch):
+    """Cloudflare vor app.guild42.ch weist "Python-urllib/x" mit 403 ab (21.10.2026)."""
+    import session_jwt
+    gesehen = {}
+
+    def abruf(anfrage, timeout=None):
+        gesehen["ua"] = anfrage.get_header("User-agent")
+        gesehen["url"] = anfrage.full_url
+        return StubAntwort(jwks_document(N1))
+
+    monkeypatch.setattr(session_jwt.urllib.request, "urlopen", abruf)
+    session_jwt._fetch_jwks(JWKS_URL)
+    assert gesehen == {"ua": "guild42-label-printer", "url": JWKS_URL}

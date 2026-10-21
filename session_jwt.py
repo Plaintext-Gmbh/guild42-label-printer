@@ -75,7 +75,10 @@ def _fetch_jwks(url: str) -> dict:
     may legitimately omit it when there is only one key, and refusing to talk to such a peer would
     be pedantry, not security — the signature still has to check out.
     """
-    with urllib.request.urlopen(url, timeout=_HTTP_TIMEOUT) as response:  # nosec B310 - fixed https URL from .env
+    # Eigener User-Agent: Cloudflare vor app.guild42.ch weist "Python-urllib/x" mit 403 ab
+    # (gemessen 21.10.2026) - ohne JWKS erkennt das Geraet guild nach einem Neustart nicht wieder.
+    request = urllib.request.Request(url, headers={"User-Agent": "guild42-label-printer"})
+    with urllib.request.urlopen(request, timeout=_HTTP_TIMEOUT) as response:  # nosec B310 - fixed https URL from .env
         document = json.loads(response.read().decode("utf-8"))
     keys = {}
     for jwk in document.get("keys") or []:
