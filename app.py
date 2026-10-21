@@ -174,6 +174,14 @@ def max_name():
     return min(max(wert, 1), 40)
 
 
+def _geclaimt() -> bool:
+    try:
+        from api import api_enabled, session_status as api_session_status
+    except ImportError:
+        return False
+    return api_enabled() and api_session_status()["connected"]
+
+
 @app.route('/')
 def index():
     # get_active_subtitle() statt get_default_subtitle(): der zuletzt gesetzte Anlass gilt fuer die
@@ -183,6 +191,10 @@ def index():
     # It only changes THIS page (preview + the subtitle it sends), never the global runtime.txt -
     # a GET must not change state for everyone. No new exposure: /print already takes any subtitle.
     event = (request.args.get('event') or '').strip()[:MAX_SUBTITLE]
+    # Karte 1557 (Daniel 21.10.2026): solange guild den Drucker geclaimt hat, ist die Startseite die
+    # Nachmeldung des Anlasses - Gaeste am Eingang sollen nicht die Druckerseite sehen.
+    if not event and _geclaimt():
+        return nachmelden()
     return render_template('index.html',
                            default_subtitle=event or get_active_subtitle(),
                            event=event,
