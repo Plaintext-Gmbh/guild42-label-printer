@@ -27,3 +27,19 @@ def test_ziel_aus_variable(app_module, monkeypatch):
     antwort = app_module.app.test_client().get("/nachmelden")
     assert antwort.status_code == 302
     assert antwort.headers["Location"] == "https://int.example/nachmelden"
+
+
+def test_startseite_leitet_bei_claim_auf_nachmelden(app_module, monkeypatch):
+    monkeypatch.delenv("NACHMELDEN_URL", raising=False)
+    monkeypatch.setattr(app_module, "_geclaimt", lambda: True)
+    client = app_module.app.test_client()
+    antwort = client.get("/")
+    assert antwort.status_code == 302
+    assert antwort.headers["Location"] == "https://app.guild42.ch/nachmelden"
+    # ?event= ist der Desk-Weg aus guild: der bleibt auf der Druckerseite
+    assert client.get("/?event=Testevent").status_code == 200
+
+
+def test_startseite_ohne_claim_bleibt_druckerseite(app_module, monkeypatch):
+    monkeypatch.setattr(app_module, "_geclaimt", lambda: False)
+    assert app_module.app.test_client().get("/").status_code == 200
