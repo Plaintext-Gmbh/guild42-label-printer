@@ -18,6 +18,7 @@ to a user would be lying on our behalf.
 
 import hashlib
 import hmac
+import json
 import logging
 import os
 import secrets
@@ -32,10 +33,12 @@ api_bp = Blueprint("api", __name__, url_prefix="/api/v1")
 
 # ── Exclusive session ────────────────────────────────────────────────────────────────────────
 #
-# WHY IN MEMORY AND NOT IN A FILE: the session is meant to die with the process. A restart of the
-# Pi is the only way out of a forgotten session - that is the deliberate design, not an oversight
-# (no admin token, no expiry). Writing it to a file would keep a stale session alive across
-# exactly the restart that is supposed to clear it.
+# WHY A FILE, NOT JUST MEMORY (Daniel, 02.11.2026, Karte 1633): the claim is an event-day state,
+# not a process state. A restart of the container or the whole Pi must NOT silently free the
+# printer for someone else while the desk that claimed it is still serving attendees. The
+# session therefore survives restarts and is released ONLY explicitly: offboard by the holder,
+# or the admin release on the host (shared secret, POST /session/freigeben). There is no expiry
+# and no automatic release anywhere.
 #
 # WHY ONLY THE HASH: same reasoning as the token file. The value is handed out once, on
 # onboarding; from then on we only ever need to recognise it.
@@ -46,12 +49,52 @@ api_bp = Blueprint("api", __name__, url_prefix="/api/v1")
 #
 # WHY AN OPTIONAL IDENTITY: recognising the holder by the hash of a value means the holder has to
 # REMEMBER that value. A caller that is redeployed daily cannot (guild42 loses it on every
-# restart, and the documented way out is a restart of this Pi). If the presented token is a JWT
-# signed by a key published at SESSION_JWKS_URL, we therefore remember WHO opened the session
-# (iss+sub) instead of only WHAT was handed over - and the same WHO may take it over with a fresh
-# token. Without SESSION_JWKS_URL nothing changes: identity stays None and only the digest counts.
+# restart). If the presented token is a JWT signed by a key published at SESSION_JWKS_URL, we
+# therefore remember WHO opened the session (iss+sub) instead of only WHAT was handed over - and
+# the same WHO may take it over with a fresh token. Without SESSION_JWKS_URL nothing changes:
+# identity stays None and only the digest counts.
 _session_lock = threading.Lock()
 _session = None  # {"digest": str, "started": float, "prints": int, "identity": dict | None}
+
+SESSION_STATE_FILE = os.environ.get(
+    "SESSION_STATE_FILE", os.path.join(os.path.dirname(__file__), "session.json"))
+
+
+def _session_speichern():
+    """Persist the claim so a restart does not drop it. Atomic: a torn write must never load."""
+    tmp = SESSION_STATE_FILE + ".tmp"
+    with open(tmp, "w") as datei:
+        json.dump(_session, datei)
+    os.replace(tmp, SESSION_STATE_FILE)
+
+
+def _session_laden():
+    """Restore the claim after a restart. A missing or broken file means 'no claim', never an error."""
+    global _session
+    try:
+        with open(SESSION_STATE_FILE) as datei:
+            daten = json.load(datei)
+        if not isinstance(daten, dict) or not isinstance(daten.get("digest"), str):
+            raise ValueError("ungueltiges Session-File")
+        _session = {"digest": daten["digest"],
+                    "started": float(daten.get("started") or time.time()),
+                    "prints": int(daten.get("prints") or 0),
+                    "identity": daten.get("identity") if isinstance(daten.get("identity"), dict) else None}
+    except (OSError, ValueError):
+        _session = None
+
+
+def _session_vergessen():
+    """Drop the claim AND its file - the only two ways out (offboard, admin release) land here."""
+    global _session
+    _session = None
+    try:
+        os.remove(SESSION_STATE_FILE)
+    except OSError:
+        pass
+
+
+_session_laden()
 
 
 def session_status() -> dict:
@@ -269,12 +312,14 @@ def onboard():
             # Same proven identity: keep the running session (counter and start time), swap the
             # token it is recognised by. Nothing is lost, and no restart of this Pi is needed.
             _session["digest"] = digest
+            _session_speichern()
             gedruckt = _session["prints"]
             log.info("api: session resumed by '%s' (same signed identity, %d prints so far)",
                      identitaet["sub"], gedruckt)
             return jsonify({"ok": True, "token": token, "resumed": True, "prints": gedruckt}), 200
         _session = {"digest": digest, "started": time.time(), "prints": 0,
                     "identity": identitaet}
+        _session_speichern()
     log.info("api: session onboarded via token '%s'%s",
              request.environ.get("api.token_label", "?"),
              " (signed identity %s)" % identitaet["sub"] if identitaet else "")
@@ -286,10 +331,10 @@ def onboard():
 def offboard():
     """Offboarding: release the printer. Only the holder of the session token may do this.
 
-    There is no admin override on purpose (decision 07.08.2026): an override without
-    authentication would bypass the whole mechanism, and one with authentication would be the
-    second auth model this design avoids. The way out of a forgotten session is a restart of the
-    Pi - which is also why the session lives in memory.
+    There is deliberately no open admin override on THIS route (the API token is not the admin):
+    the admin release lives outside the API at POST /session/freigeben and needs its own shared
+    secret, so there is still exactly one auth model per entry point. Neither path expires or
+    releases automatically (Daniel, 02.11.2026).
     """
     global _session
     with _session_lock:
@@ -301,7 +346,7 @@ def offboard():
         return jsonify({"error": "session_token_invalid"}), 403
     with _session_lock:
         gedruckt = _session["prints"]
-        _session = None
+        _session_vergessen()
     log.info("api: session offboarded after %d prints", gedruckt)
     return jsonify({"ok": True, "prints": gedruckt}), 200
 
@@ -328,18 +373,17 @@ def simulation_aktiv() -> bool:
 def force_release() -> dict | None:
     """Drop the running session WITHOUT presenting its token.
 
-    Callers must have established that this is the simulator. The function itself does not check
-    — it is the mechanism, not the permission — so both entry points (this blueprint and the
-    ``/sim`` page) share one implementation instead of two that drift.
+    The permission is established by the caller - this function is the mechanism, not the
+    permission - so all entry points (the simulator's reset route, the simulator page, and the
+    admin release POST /session/freigeben) share one implementation instead of three that drift.
 
     :return: the numbers of the released session, or ``None`` if none was running
     """
-    global _session
     with _session_lock:
         if _session is None:
             return None
         freigegeben = {"prints": _session["prints"], "since": int(_session["started"])}
-        _session = None
+        _session_vergessen()
     return freigegeben
 
 
@@ -354,9 +398,9 @@ def reset_session():
     present in the simulator: there is no device, and a second caller can at worst overwrite a
     PNG in a bounded in-memory buffer.
 
-    WHAT IT COSTS TO NOT HAVE IT. The session lives in memory and dies with the process, so the
-    documented way out of a forgotten session is a restart. For the Pi that is a deliberate
-    hurdle, standing right next to the person who owns the printer. For the simulator it is
+    WHAT IT COSTS TO NOT HAVE IT. A forgotten session is now released via the admin release
+    (POST /session/freigeben) on the Pi, or offboard by the holder — never by a timeout. For the
+    Pi that hurdle stands right next to the person who owns the printer. For the simulator it is
     absurd: the channel of printer-int had been held since 21.08.2026 by a sender whose token no
     longer existed anywhere, and the guild settings page could only say "release it at the
     device" about a container in a rack. Whoever wanted to test had to have NAS access and
@@ -510,6 +554,7 @@ def print_label():
     with _session_lock:
         if _session is not None:
             _session["prints"] += 1
+            _session_speichern()
 
     # Karte 1466 L1: kein Teilnehmername im Log (landet in docker logs/Graylog); die Laenge reicht.
     log.info("api: accepted print (%d chars) via token '%s'",

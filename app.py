@@ -3,6 +3,7 @@ from brother_ql.conversion import convert
 from brother_ql.backends.helpers import send
 from brother_ql.raster import BrotherQLRaster
 from PIL import Image, ImageDraw, ImageFont
+import hmac
 import os
 
 app = Flask(__name__)
@@ -244,6 +245,34 @@ def session_status():
     if not api_enabled():
         return jsonify({'enabled': False})
     return jsonify({'enabled': True, **api_session_status()})
+
+
+@app.route('/session/freigeben', methods=['POST'])
+def session_freigeben():
+    """Admin release of the claim (Karte 1633, Daniel 02.11.2026).
+
+    The admin container on the same host drops the claim WITHOUT the holder's token. Deliberately
+    NOT under /admin/: nginx routes /admin/ to the admin container, so this endpoint lives next
+    to /session-status on this app. Without a configured secret it answers 404 exactly like an
+    unknown route; with one, the header must match. The claim is never released automatically —
+    this endpoint and the holder's offboard are the only ways out.
+    """
+    geheim = os.environ.get('ADMIN_RELEASE_SECRET', '')
+    if not geheim:
+        return jsonify({'error': 'not_found'}), 404
+    if not hmac.compare_digest(request.headers.get('X-Admin-Release', ''), geheim):
+        app.logger.info('admin release rejected from %s', request.remote_addr)
+        return jsonify({'error': 'unauthorized'}), 401
+    try:
+        from api import force_release
+        freigegeben = force_release()
+    except ImportError:
+        freigegeben = None
+    if freigegeben is None:
+        return jsonify({'ok': True, 'released': False}), 200
+    app.logger.info('session released via admin after %d prints (since %d)',
+                    freigegeben['prints'], freigegeben['since'])
+    return jsonify({'ok': True, 'released': True, **freigegeben}), 200
 
 
 @app.route('/print', methods=['POST'])
