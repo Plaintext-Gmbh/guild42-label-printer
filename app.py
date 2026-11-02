@@ -109,15 +109,19 @@ def set_active_subtitle(subtitle):
 
 
 def _fitting_font(draw, text, path, start_size, min_size, max_width):
-    """The largest of the given font sizes at which ``text`` still fits into ``max_width``.
+    """The largest size in ``[min_size, start_size]`` at which ``text`` fits into ``max_width``.
 
     WHY MEASURE INSTEAD OF COUNTING CHARACTERS: a character limit is a guess about width, and it
     is a bad one — "Willi" and "Wamburu" have the same length and nowhere near the same width at
     80px. The limit stays (it is what an operator can reason about at the kiosk), but the label
     itself is protected by the only thing that actually knows: the rendered width.
+
+    Returns None when ``text`` is wider than ``max_width`` even at ``min_size``: the caller
+    decides whether to re-flow (two lines) or to shrink below the readability floor — the one
+    thing that must not happen is the name running off the paper (Karte 1629).
     """
     size = start_size
-    while size > min_size:
+    while size >= min_size:
         try:
             font = ImageFont.truetype(path, size)
         except Exception:
@@ -125,25 +129,94 @@ def _fitting_font(draw, text, path, start_size, min_size, max_width):
         if draw.textlength(text, font=font) <= max_width:
             return font
         size -= 2
-    try:
-        return ImageFont.truetype(path, min_size)
-    except Exception:
-        return ImageFont.load_default()
+    return None
+
+
+def _shrink_to_fit(draw, text, path, start_size, max_width):
+    """The last resort below the readability floor: keeps shrinking until the text fits."""
+    size = start_size
+    while size > 0:
+        try:
+            font = ImageFont.truetype(path, size)
+        except Exception:
+            return ImageFont.load_default()
+        if draw.textlength(text, font=font) <= max_width:
+            return font
+        size -= 2
+    return ImageFont.load_default()
 
 
 FONT_BOLD = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
 FONT_REGULAR = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
 
+# Lesbarkeitsgrenzen des Schilds: darunter wird ein Name auf dem Label unleserlich. Die Fitting-
+# Logik achtet sie nur, solange sie kann — ein zu langer Name landet unter der Grenze statt am
+# rechten Rand abgeschnitten (Karte 1629).
+NAME_MIN = 34
+# Zwei Zeilen duerfen nie die Unterzeile (URL) erreichen: Darunter wird die Zeilenhoehe so gross,
+# dass der Block bei der Zentrierung um y=120 die URL ueberlappt.
+ZWEI_ZEILEN_MAX = 56
+
+
+def _name_lines(draw, name, max_width):
+    """How the name goes onto the label: Vorname and Nachname on a line of their own.
+
+    Two lines are the default for every name with more than one word — the first word opens the
+    first line, the rest goes below (Daniel, 02.11.2026). The break that lets both lines render
+    the largest wins; its size is capped so the block keeps clear of the subtitle. A line that
+    needs less than NAME_MIN first tries every other word break; only when no break fits does a
+    line shrink below the readability floor — and even then it is fitted, never cut off.
+    """
+    woerter = name.split()
+    if len(woerter) > 1:
+        best = None
+        for i in range(1, len(woerter)):
+            eins = " ".join(woerter[:i])
+            zwei = " ".join(woerter[i:])
+            f1 = _fitting_font(draw, eins, FONT_BOLD, 80, NAME_MIN, max_width)
+            f2 = _fitting_font(draw, zwei, FONT_BOLD, 80, NAME_MIN, max_width)
+            if f1 is None or f2 is None:
+                continue
+            groesse = min(f1.size, f2.size, ZWEI_ZEILEN_MAX)
+            if best is None or groesse > best[0]:
+                best = (groesse, eins, zwei)
+        if best is None:
+            # Kein Umbruch passt in Lesbarkeitsgroesse: Vorname/Nachname trotzdem auf zwei Zeilen,
+            # die zu breite Zeile schrumpft unter die Grenze — abgeschnitten wird nie.
+            eins, zwei = woerter[0], " ".join(woerter[1:])
+            f1 = _fitting_font(draw, eins, FONT_BOLD, 80, NAME_MIN, max_width) \
+                or _shrink_to_fit(draw, eins, FONT_BOLD, NAME_MIN - 2, max_width)
+            f2 = _fitting_font(draw, zwei, FONT_BOLD, 80, NAME_MIN, max_width) \
+                or _shrink_to_fit(draw, zwei, FONT_BOLD, NAME_MIN - 2, max_width)
+            best = (min(f1.size, f2.size), eins, zwei)
+        groesse, eins, zwei = best
+        return [(eins, ImageFont.truetype(FONT_BOLD, groesse)),
+                (zwei, ImageFont.truetype(FONT_BOLD, groesse))]
+    font = _fitting_font(draw, name, FONT_BOLD, 80, NAME_MIN, max_width)
+    if font is not None:
+        return [(name, font)]
+    return [(name, _shrink_to_fit(draw, name, FONT_BOLD, NAME_MIN - 2, max_width))]
+
 
 def create_label_image(name, subtitle='Guild42.ch'):
     W, H = 696, 271
     MARGIN = 20                       # ink this close to the edge is cut off by the roll
+    max_width = W - 2 * MARGIN
     img = Image.new('RGB', (W, H), 'white')
     draw = ImageDraw.Draw(img)
-    font_name = _fitting_font(draw, name, FONT_BOLD, 80, 34, W - 2 * MARGIN)
-    font_sub = _fitting_font(draw, subtitle, FONT_REGULAR, 40, 18, W - 2 * MARGIN)
+    font_sub = _fitting_font(draw, subtitle, FONT_REGULAR, 40, 18, max_width) \
+        or _shrink_to_fit(draw, subtitle, FONT_REGULAR, 16, max_width)
     draw.rectangle([0, 0, W, 18], fill='#1a1a2e')
-    draw.text((W // 2, 120), name, font=font_name, fill='black', anchor='mm')
+    lines = _name_lines(draw, name, max_width)
+    if len(lines) == 1:
+        draw.text((W // 2, 120), lines[0][0], font=lines[0][1], fill='black', anchor='mm')
+    else:
+        groesse = lines[0][1].size
+        abstand = max(groesse // 3, 10)
+        y = 120 - (groesse + abstand) // 2
+        for text, font in lines:
+            draw.text((W // 2, y), text, font=font, fill='black', anchor='mm')
+            y += groesse + abstand
     draw.text((W // 2, 210), subtitle, font=font_sub, fill='#555555', anchor='mm')
     return img
 
