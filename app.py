@@ -153,35 +153,48 @@ FONT_REGULAR = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
 # Logik achtet sie nur, solange sie kann — ein zu langer Name landet unter der Grenze statt am
 # rechten Rand abgeschnitten (Karte 1629).
 NAME_MIN = 34
+# Zwei Zeilen duerfen nie die Unterzeile (URL) erreichen: Darunter wird die Zeilenhoehe so gross,
+# dass der Block bei der Zentrierung um y=120 die URL ueberlappt.
+ZWEI_ZEILEN_MAX = 56
 
 
 def _name_lines(draw, name, max_width):
-    """How the name goes onto the label: one fitted line, or two when that keeps it readable.
+    """How the name goes onto the label: Vorname and Nachname on a line of their own.
 
-    A name that needs less than NAME_MIN on one line is tried as two word-broken lines that both
-    fit at NAME_MIN or above — 40 characters read fine on two lines and are a blur on one tiny
-    line. Only when no split fits (one long word) does the name shrink below the floor, and even
-    then only until it fits: it is never cut off.
+    Two lines are the default for every name with more than one word — the first word opens the
+    first line, the rest goes below (Daniel, 02.11.2026). The break that lets both lines render
+    the largest wins; its size is capped so the block keeps clear of the subtitle. A line that
+    needs less than NAME_MIN first tries every other word break; only when no break fits does a
+    line shrink below the readability floor — and even then it is fitted, never cut off.
     """
-    font = _fitting_font(draw, name, FONT_BOLD, 80, NAME_MIN, max_width)
-    if font is not None:
-        return [(name, font)]
-    best = None
     woerter = name.split()
-    for i in range(1, len(woerter)):
-        eins = " ".join(woerter[:i])
-        zwei = " ".join(woerter[i:])
-        f1 = _fitting_font(draw, eins, FONT_BOLD, 80, NAME_MIN, max_width)
-        f2 = _fitting_font(draw, zwei, FONT_BOLD, 80, NAME_MIN, max_width)
-        if f1 is None or f2 is None:
-            continue
-        groesse = min(f1.size, f2.size)
-        if best is None or groesse > best[0]:
-            best = (groesse, eins, zwei)
-    if best is not None:
+    if len(woerter) > 1:
+        best = None
+        for i in range(1, len(woerter)):
+            eins = " ".join(woerter[:i])
+            zwei = " ".join(woerter[i:])
+            f1 = _fitting_font(draw, eins, FONT_BOLD, 80, NAME_MIN, max_width)
+            f2 = _fitting_font(draw, zwei, FONT_BOLD, 80, NAME_MIN, max_width)
+            if f1 is None or f2 is None:
+                continue
+            groesse = min(f1.size, f2.size, ZWEI_ZEILEN_MAX)
+            if best is None or groesse > best[0]:
+                best = (groesse, eins, zwei)
+        if best is None:
+            # Kein Umbruch passt in Lesbarkeitsgroesse: Vorname/Nachname trotzdem auf zwei Zeilen,
+            # die zu breite Zeile schrumpft unter die Grenze — abgeschnitten wird nie.
+            eins, zwei = woerter[0], " ".join(woerter[1:])
+            f1 = _fitting_font(draw, eins, FONT_BOLD, 80, NAME_MIN, max_width) \
+                or _shrink_to_fit(draw, eins, FONT_BOLD, NAME_MIN - 2, max_width)
+            f2 = _fitting_font(draw, zwei, FONT_BOLD, 80, NAME_MIN, max_width) \
+                or _shrink_to_fit(draw, zwei, FONT_BOLD, NAME_MIN - 2, max_width)
+            best = (min(f1.size, f2.size), eins, zwei)
         groesse, eins, zwei = best
         return [(eins, ImageFont.truetype(FONT_BOLD, groesse)),
                 (zwei, ImageFont.truetype(FONT_BOLD, groesse))]
+    font = _fitting_font(draw, name, FONT_BOLD, 80, NAME_MIN, max_width)
+    if font is not None:
+        return [(name, font)]
     return [(name, _shrink_to_fit(draw, name, FONT_BOLD, NAME_MIN - 2, max_width))]
 
 

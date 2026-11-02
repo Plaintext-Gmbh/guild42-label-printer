@@ -132,15 +132,29 @@ def test_long_name_stays_inside_the_label(client):
     assert kiosk._fitting_font(zeichner, "Anna", kiosk.FONT_BOLD, 80, 34, 696 - 40).size == 80
 
 
-def test_daniel_marthaler_bleibt_einzeilig_in_lesbarer_groesse(client):
-    """Der reale Fall vom Schild: passt auf eine Zeile, wird also nicht gezweizeiligt."""
+def test_vorname_und_nachname_stehen_auf_zwei_zeilen(client):
+    """Der Standardfall (Daniel, 02.11.2026): Vorname auf Zeile eins, Nachname auf Zeile zwei."""
     import app as kiosk
     from PIL import ImageDraw
 
     zeichner = ImageDraw.Draw(kiosk.create_label_image("Daniel Marthaler", "https://guild42.ch"))
     lines = kiosk._name_lines(zeichner, "Daniel Marthaler", 696 - 40)
+    assert len(lines) == 2
+    assert lines[0][0] == "Daniel"
+    assert lines[1][0] == "Marthaler"
+    for text, schrift in lines:
+        assert zeichner.textlength(text, font=schrift) <= 696 - 40
+
+
+def test_ein_wort_steht_auf_einer_zeile(client):
+    """Ein Ein-Wort-Name (Kiosk: nur Vorname) bleibt einzeilig und gross."""
+    import app as kiosk
+    from PIL import ImageDraw
+
+    zeichner = ImageDraw.Draw(kiosk.create_label_image("Madonna", "https://guild42.ch"))
+    lines = kiosk._name_lines(zeichner, "Madonna", 696 - 40)
     assert len(lines) == 1
-    assert lines[0][1].size >= 34
+    assert lines[0][1].size == 80
 
 
 def test_name_ueber_lesbarkeitsgrenze_wird_zweizeilig_statt_winzig(client):
