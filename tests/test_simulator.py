@@ -132,6 +132,59 @@ def test_long_name_stays_inside_the_label(client):
     assert kiosk._fitting_font(zeichner, "Anna", kiosk.FONT_BOLD, 80, 34, 696 - 40).size == 80
 
 
+def test_daniel_marthaler_bleibt_einzeilig_in_lesbarer_groesse(client):
+    """Der reale Fall vom Schild: passt auf eine Zeile, wird also nicht gezweizeiligt."""
+    import app as kiosk
+    from PIL import ImageDraw
+
+    zeichner = ImageDraw.Draw(kiosk.create_label_image("Daniel Marthaler", "https://guild42.ch"))
+    lines = kiosk._name_lines(zeichner, "Daniel Marthaler", 696 - 40)
+    assert len(lines) == 1
+    assert lines[0][1].size >= 34
+
+
+def test_name_ueber_lesbarkeitsgrenze_wird_zweizeilig_statt_winzig(client):
+    """Ein Name, der auf einer Zeile unter die Lesbarkeitsgrenze rutschen wuerde, wird
+    wortumgebrochen auf zwei Zeilen gesetzt — beide in lesbarer Groesse und nie breiter als das Label."""
+    import app as kiosk
+    from PIL import ImageDraw
+
+    lang = "Maximilian Alexander Friederike von Hohenzollern"   # 56 Zeichen
+    zeichner = ImageDraw.Draw(kiosk.create_label_image(lang, "https://guild42.ch"))
+    lines = kiosk._name_lines(zeichner, lang, 696 - 40)
+    assert len(lines) == 2
+    for text, schrift in lines:
+        assert zeichner.textlength(text, font=schrift) <= 696 - 40
+        assert schrift.size >= 34
+
+
+def test_ein_langes_wort_wird_nie_abgeschnitten(client):
+    """Kein Wortumbruch hilft (ein einziges langes Wort): unter der Lesbarkeitsgrenze wird
+    weitergeschrumft, bis es passt — abgeschnitten wird nie (Karte 1629)."""
+    import app as kiosk
+    from PIL import ImageDraw
+
+    wort = "Wolfeschlegelsteinhausenbergerdorff"                # 39 Zeichen, kein Leerzeichen
+    zeichner = ImageDraw.Draw(kiosk.create_label_image(wort, "https://guild42.ch"))
+    lines = kiosk._name_lines(zeichner, wort, 696 - 40)
+    assert len(lines) == 1
+    assert zeichner.textlength(wort, font=lines[0][1]) <= 696 - 40
+
+
+def test_lange_url_wird_nie_abgeschnitten(client):
+    """Auch die Unterzeile ist geschuetzt: eine lange URL schrumpft unter ihre Lesbarkeitsgrenze,
+    statt am Rand abgeschnitten zu werden."""
+    import app as kiosk
+    from PIL import ImageDraw
+
+    url = "https://sehr-lange-subdomain.workshop-tage.example/2026/herbst"
+    bild = kiosk.create_label_image("Anna", url)
+    zeichner = ImageDraw.Draw(bild)
+    schrift = kiosk._fitting_font(zeichner, url, kiosk.FONT_REGULAR, 40, 18, 696 - 40) \
+        or kiosk._shrink_to_fit(zeichner, url, kiosk.FONT_REGULAR, 16, 696 - 40)
+    assert zeichner.textlength(url, font=schrift) <= 696 - 40
+
+
 def test_max_name_kommt_aus_der_umgebung(client, monkeypatch):
     """The limit is a setting now — guild42 may ask for more than 15 characters."""
     import app as kiosk
