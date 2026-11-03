@@ -33,6 +33,9 @@ services:
       # The container runs as uid 1013: the file must be readable for it (e.g. chgrp 1013, 0640).
       # No file, no API — every /api/v1/* route answers 404 instead of 401.
       - ./api_tokens.txt:/opt/printer/api_tokens.txt:ro
+      # Karte 1633: the printer claim. Without this mount it survives a restart, not a re-create
+      # (image pull). The host dir must be writable for uid 1013 (mkdir state && chown 1013 state).
+      - ./state:/opt/printer/state
       # Optional: DEFAULT_SUBTITLE=... for the line under the name.
       - ./.env:/opt/printer/.env:ro
 

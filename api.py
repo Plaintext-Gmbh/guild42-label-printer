@@ -56,16 +56,26 @@ api_bp = Blueprint("api", __name__, url_prefix="/api/v1")
 _session_lock = threading.Lock()
 _session = None  # {"digest": str, "started": float, "prints": int, "identity": dict | None}
 
+# In its own directory, not next to the code: the code dir is root-owned and read-only for the
+# container user (Dockerfile), and only a mounted directory survives a container RE-CREATE (image
+# pull). The Dockerfile creates state/ for uid 1013, the compose file mounts it.
 SESSION_STATE_FILE = os.environ.get(
-    "SESSION_STATE_FILE", os.path.join(os.path.dirname(__file__), "session.json"))
+    "SESSION_STATE_FILE", os.path.join(os.path.dirname(__file__), "state", "session.json"))
 
 
 def _session_speichern():
-    """Persist the claim so a restart does not drop it. Atomic: a torn write must never load."""
+    """Persist the claim so a restart does not drop it. Atomic: a torn write must never load.
+
+    A write that fails must not fail the claim itself: the desk keeps printing, the claim just
+    lives in memory until the next restart - logged loudly, because then it is not restart-safe."""
     tmp = SESSION_STATE_FILE + ".tmp"
-    with open(tmp, "w") as datei:
-        json.dump(_session, datei)
-    os.replace(tmp, SESSION_STATE_FILE)
+    try:
+        os.makedirs(os.path.dirname(SESSION_STATE_FILE), exist_ok=True)
+        with open(tmp, "w") as datei:
+            json.dump(_session, datei)
+        os.replace(tmp, SESSION_STATE_FILE)
+    except OSError as e:
+        log.error("session claim NOT persisted (%s): it will not survive a restart", e)
 
 
 def _session_laden():

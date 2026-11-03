@@ -455,3 +455,20 @@ def test_admin_release_nur_mit_secret_und_niemals_automatisch(umgebung, monkeypa
         assert not os.path.exists(api.SESSION_STATE_FILE)
     finally:
         api._session_vergessen()
+
+
+def test_claim_scheitert_nicht_an_nicht_schreibbarem_speicher(umgebung, monkeypatch, tmp_path):
+    """Karte 1633: Ist der Speicherort nicht schreibbar (z. B. Code-Verzeichnis root-owned), bleibt der
+    Claim trotzdem gueltig - nur nicht neustartsicher. Er darf den Druckplatz nicht lahmlegen."""
+    import api
+
+    sperre = tmp_path / "gesperrt"
+    sperre.write_text("keine Datei, sondern ein Verzeichnis-Ersatz")  # makedirs darunter scheitert
+    monkeypatch.setattr(api, "SESSION_STATE_FILE", str(sperre / "state" / "session.json"))
+    client, tokens, _ = umgebung
+    _mit_token(tokens)
+    try:
+        _onboard(client)
+        assert api.session_status()["connected"] is True
+    finally:
+        api._session_vergessen()
