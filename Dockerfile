@@ -35,7 +35,9 @@ EXPOSE 5000
 # disables the API (every call 401), it never lets anyone in.
 # The printer device: group_add "lp" in the compose file (see docker-compose.example.yml).
 RUN useradd -u 1013 -U -M -d /nonexistent -s /usr/sbin/nologin printer \
- && touch runtime.txt && chown printer:printer runtime.txt
+ && touch runtime.txt && chown printer:printer runtime.txt \
+ # Karte 1633: the claim (state/session.json) survives restarts; mount state/ to survive re-creates.
+ && mkdir state && chown printer:printer state
 # Karte 1466: printer hat kein Home (/nonexistent); gunicorn legt seinen Control-Socket unter $HOME an
 # und meldete sonst bei jedem Start "Permission denied: /nonexistent".
 ENV HOME=/tmp

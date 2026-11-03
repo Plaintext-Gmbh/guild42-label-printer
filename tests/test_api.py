@@ -36,14 +36,15 @@ def umgebung(tmp_path, monkeypatch):
 
     monkeypatch.setattr(api, "token_file", lambda: str(tokens))
     monkeypatch.setattr(kiosk, "PRINTER_URI", str(drucker))
+    monkeypatch.setattr(api, "SESSION_STATE_FILE", str(tmp_path / "session.json"))
     kiosk.app.config.update(TESTING=True)
     # The rate limit counter lives in memory and survives between tests, so without this reset
     # the suite would spend its own budget and later tests would fail with 429 for no reason.
     if kiosk.limiter is not None:
         kiosk.limiter.reset()
-    # Same for the session: it is module state on purpose (it must die with the process), which
-    # means one test's session would leak into the next.
-    api._session = None
+    # The session is persistent state (a claim must survive restarts, Daniel 02.11.2026), so a
+    # fresh tmp session file per test is the only way one test's claim cannot leak into the next.
+    api._session_vergessen()
     return kiosk.app.test_client(), tokens, drucker
 
 
@@ -388,3 +389,86 @@ def test_ohne_tokendatei_meldet_die_statuszeile_nichts(umgebung):
     client, tokens, _ = umgebung
     assert not tokens.exists()
     assert client.get("/session-status").get_json() == {"enabled": False}
+
+
+def test_session_ueberlebt_neustart(umgebung):
+    """Der Claim liegt in einer Datei: Neustart von App oder Pi loest ihn NICHT (Daniel, 02.11.2026)."""
+    import api
+
+    client, tokens, _ = umgebung
+    _mit_token(tokens)
+    try:
+        _, _ = _onboard(client)
+        assert api.session_status()["connected"] is True
+        state = api.SESSION_STATE_FILE
+        assert os.path.exists(state)
+
+        api._session = None        # der Prozess stirbt...
+        api._session_laden()       # ...und startet neu
+        assert api.session_status()["connected"] is True
+    finally:
+        api._session_vergessen()
+
+
+def test_offboard_loescht_session_datei(umgebung):
+    import api
+
+    client, tokens, _ = umgebung
+    _mit_token(tokens)
+    try:
+        _, session_token = _onboard(client)
+        assert os.path.exists(api.SESSION_STATE_FILE)
+        assert client.delete("/api/v1/session",
+                             headers={**KOPF, "X-Session-Token": session_token}).status_code == 200
+        assert not os.path.exists(api.SESSION_STATE_FILE)
+        assert api.session_status()["connected"] is False
+    finally:
+        api._session_vergessen()
+
+
+def test_admin_release_nur_mit_secret_und_niemals_automatisch(umgebung, monkeypatch):
+    """POST /session/freigeben: unsichtbar ohne gesetztes Secret, mit Secret die explizite,
+    niemals automatische Freigabe der Reservierung ueber die Admin-Oberflaeche."""
+    import api
+
+    client, tokens, _ = umgebung
+    _mit_token(tokens)
+    monkeypatch.delenv("ADMIN_RELEASE_SECRET", raising=False)
+    try:
+        # Ohne Secret sieht die Route aus wie eine unbekannte.
+        assert client.post("/session/freigeben").status_code == 404
+
+        _, _ = _onboard(client)
+        assert api.session_status()["connected"] is True
+
+        monkeypatch.setenv("ADMIN_RELEASE_SECRET", "testgeheim")
+        # Falsches/fehlendes Secret kommt nicht rein.
+        assert client.post("/session/freigeben").status_code == 401
+        assert client.post("/session/freigeben",
+                           headers={"X-Admin-Release": "falsch"}).status_code == 401
+        assert api.session_status()["connected"] is True
+
+        # Richtiges Secret loesst explizit auf - inklusive Datei, ein Neustart haette es nicht.
+        antwort = client.post("/session/freigeben", headers={"X-Admin-Release": "testgeheim"})
+        assert antwort.status_code == 200 and antwort.get_json()["released"] is True
+        assert api.session_status()["connected"] is False
+        assert not os.path.exists(api.SESSION_STATE_FILE)
+    finally:
+        api._session_vergessen()
+
+
+def test_claim_scheitert_nicht_an_nicht_schreibbarem_speicher(umgebung, monkeypatch, tmp_path):
+    """Karte 1633: Ist der Speicherort nicht schreibbar (z. B. Code-Verzeichnis root-owned), bleibt der
+    Claim trotzdem gueltig - nur nicht neustartsicher. Er darf den Druckplatz nicht lahmlegen."""
+    import api
+
+    sperre = tmp_path / "gesperrt"
+    sperre.write_text("keine Datei, sondern ein Verzeichnis-Ersatz")  # makedirs darunter scheitert
+    monkeypatch.setattr(api, "SESSION_STATE_FILE", str(sperre / "state" / "session.json"))
+    client, tokens, _ = umgebung
+    _mit_token(tokens)
+    try:
+        _onboard(client)
+        assert api.session_status()["connected"] is True
+    finally:
+        api._session_vergessen()
