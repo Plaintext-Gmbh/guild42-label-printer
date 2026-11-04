@@ -200,16 +200,16 @@ def test_lange_url_wird_nie_abgeschnitten(client):
 
 
 def test_max_name_kommt_aus_der_umgebung(client, monkeypatch):
-    """The limit is a setting now — guild42 may ask for more than 15 characters."""
+    """The limit is a setting now — guild42 may ask for more than the Vorgabe (Karte 1655: 40)."""
     import app as kiosk
 
-    assert kiosk.max_name() == 15                      # Vorgabe unveraendert
+    assert kiosk.max_name() == 40                      # Vorgabe = Produktionswert (Karte 1655)
     monkeypatch.setenv("MAX_NAME", "25")
     assert kiosk.max_name() == 25
     monkeypatch.setenv("MAX_NAME", "999")              # ausserhalb des Rahmens -> gekappt
     assert kiosk.max_name() == 40
     monkeypatch.setenv("MAX_NAME", "keine Zahl")       # Unsinn faellt auf die Vorgabe zurueck
-    assert kiosk.max_name() == 15
+    assert kiosk.max_name() == 40
 
 
 def test_label_url_is_unique_per_run(client):
