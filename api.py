@@ -534,7 +534,7 @@ def print_label():
         return jsonify({"error": "printer_unavailable"}), 503
 
     try:
-        image = create_label_image(name, subtitle)
+        image = create_label_image(name, subtitle, mitglied=data.get("mitglied") is True)
         if sim:
             # Same pipeline, different sink (see simulator.py). Session accounting and the
             # response below stay identical - a caller cannot tell simulation from hardware.
