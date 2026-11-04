@@ -341,3 +341,25 @@ def test_compose_beispiel_bildet_beide_faelle_ab():
     assert "/dev/usb/lp0:/dev/usb/lp0" in text
     assert "group_add" in text and "lp" in text
     assert "api_tokens.txt" in text
+
+
+def test_vorname_fett_nachname_normal(kiosk):
+    """Karte 1655: erste Zeile fett, zweite normal, beide gleich gross."""
+    from PIL import Image, ImageDraw
+    zeichner = ImageDraw.Draw(Image.new("RGB", (696, 271)))
+    eins, zwei = kiosk._name_lines(zeichner, "Adrian Wildermuth", 696 - 40)
+    assert (eins[0], zwei[0]) == ("Adrian", "Wildermuth")
+    assert eins[1].path == kiosk.FONT_BOLD and zwei[1].path == kiosk.FONT_REGULAR
+    assert eins[1].size == zwei[1].size
+
+
+def test_mitglied_macht_die_unterzeile_fett_und_schwarz(kiosk):
+    """Karte 1655: Mitglieder tragen die Unterzeile fett. Ohne Flag bleibt sie grau."""
+    def dunkelste_unterzeile(bild):
+        return min(bild.convert("L").crop((0, 190, 696, 235)).getdata())
+    def tinte(bild):
+        return sum(1 for p in bild.convert("L").crop((0, 190, 696, 235)).getdata() if p < 128)
+    normal = kiosk.create_label_image("Anna Muster", "Guild42 Member")
+    mitglied = kiosk.create_label_image("Anna Muster", "Guild42 Member", mitglied=True)
+    assert dunkelste_unterzeile(mitglied) < dunkelste_unterzeile(normal)
+    assert tinte(mitglied) > tinte(normal)

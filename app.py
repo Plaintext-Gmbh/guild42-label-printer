@@ -164,7 +164,8 @@ def _name_lines(draw, name, max_width):
 
     Two lines are the default for every name with more than one word — the first word opens the
     first line, the rest goes below (Daniel, 02.11.2026). The break that lets both lines render
-    the largest wins; its size is capped so the block keeps clear of the subtitle. A line that
+    the largest wins; its size is capped so the block keeps clear of the subtitle. The first line
+    is bold, the second regular, as on Simon's labels (Karte 1655). A line that
     needs less than NAME_MIN first tries every other word break; only when no break fits does a
     line shrink below the readability floor — and even then it is fitted, never cut off.
     """
@@ -175,7 +176,7 @@ def _name_lines(draw, name, max_width):
             eins = " ".join(woerter[:i])
             zwei = " ".join(woerter[i:])
             f1 = _fitting_font(draw, eins, FONT_BOLD, 80, NAME_MIN, max_width)
-            f2 = _fitting_font(draw, zwei, FONT_BOLD, 80, NAME_MIN, max_width)
+            f2 = _fitting_font(draw, zwei, FONT_REGULAR, 80, NAME_MIN, max_width)
             if f1 is None or f2 is None:
                 continue
             groesse = min(f1.size, f2.size, ZWEI_ZEILEN_MAX)
@@ -187,26 +188,28 @@ def _name_lines(draw, name, max_width):
             eins, zwei = woerter[0], " ".join(woerter[1:])
             f1 = _fitting_font(draw, eins, FONT_BOLD, 80, NAME_MIN, max_width) \
                 or _shrink_to_fit(draw, eins, FONT_BOLD, NAME_MIN - 2, max_width)
-            f2 = _fitting_font(draw, zwei, FONT_BOLD, 80, NAME_MIN, max_width) \
-                or _shrink_to_fit(draw, zwei, FONT_BOLD, NAME_MIN - 2, max_width)
+            f2 = _fitting_font(draw, zwei, FONT_REGULAR, 80, NAME_MIN, max_width) \
+                or _shrink_to_fit(draw, zwei, FONT_REGULAR, NAME_MIN - 2, max_width)
             best = (min(f1.size, f2.size), eins, zwei)
         groesse, eins, zwei = best
         return [(eins, ImageFont.truetype(FONT_BOLD, groesse)),
-                (zwei, ImageFont.truetype(FONT_BOLD, groesse))]
+                (zwei, ImageFont.truetype(FONT_REGULAR, groesse))]
     font = _fitting_font(draw, name, FONT_BOLD, 80, NAME_MIN, max_width)
     if font is not None:
         return [(name, font)]
     return [(name, _shrink_to_fit(draw, name, FONT_BOLD, NAME_MIN - 2, max_width))]
 
 
-def create_label_image(name, subtitle='Guild42.ch'):
+def create_label_image(name, subtitle='Guild42.ch', mitglied=False):
     W, H = 696, 271
     MARGIN = 20                       # ink this close to the edge is cut off by the roll
     max_width = W - 2 * MARGIN
     img = Image.new('RGB', (W, H), 'white')
     draw = ImageDraw.Draw(img)
-    font_sub = _fitting_font(draw, subtitle, FONT_REGULAR, 40, 18, max_width) \
-        or _shrink_to_fit(draw, subtitle, FONT_REGULAR, 16, max_width)
+    # Karte 1655: Bei Mitgliedern steht die Unterzeile fett und schwarz.
+    sub_font = FONT_BOLD if mitglied else FONT_REGULAR
+    font_sub = _fitting_font(draw, subtitle, sub_font, 40, 18, max_width) \
+        or _shrink_to_fit(draw, subtitle, sub_font, 16, max_width)
     draw.rectangle([0, 0, W, 18], fill='#1a1a2e')
     lines = _name_lines(draw, name, max_width)
     if len(lines) == 1:
@@ -218,7 +221,7 @@ def create_label_image(name, subtitle='Guild42.ch'):
         for text, font in lines:
             draw.text((W // 2, y), text, font=font, fill='black', anchor='mm')
             y += groesse + abstand
-    draw.text((W // 2, 210), subtitle, font=font_sub, fill='#555555', anchor='mm')
+    draw.text((W // 2, 210), subtitle, font=font_sub, fill='black' if mitglied else '#555555', anchor='mm')
     return img
 
 
