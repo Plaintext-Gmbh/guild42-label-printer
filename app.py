@@ -232,7 +232,12 @@ def create_label_image(name, subtitle='Guild42.ch', mitglied=False):
 # WHY THIS IS NOT A COSMETIC REFACTOR: until now both files carried the number. When the kiosk went
 # 40 -> 12 -> 15, api.py kept 40 and nothing said a word — a name printed through the API overflowed
 # the paper while the same name was refused at the kiosk. One constant cannot drift from itself.
-MAX_NAME = 15
+#
+# Karte 1655 (Abnahme jumphost, 04.11.2026): Die Vorgabe ist ab jetzt der PRODUKTIONSWERT 40.
+# Der alte Default 15 war die Falle hinter «Adrian Wildermu»: Jede Installation OHNE gesetzte
+# Variable hat bei 15 abgeschnitten — die Variable soll Abweichungen ermoeglichen, nicht vor
+# einer schlechten Vorgabe retten. Der gueltige Wert wird beim Start ins Log geschrieben.
+MAX_NAME = 40
 MAX_SUBTITLE = 50
 
 
@@ -240,7 +245,7 @@ def max_name():
     """The character limit, overridable per installation via ``MAX_NAME``.
 
     WHY IT IS NOW A SETTING: guild42 makes the limit configurable per tenant, and a caller that
-    is allowed to ask for 25 characters must not have them silently cut to 15 here. Read per call
+    is allowed to ask for 25 characters must not have them silently cut to 40 here. Read per call
     like the other .env-backed values, so no restart semantics need explaining. Long names no
     longer run off the paper either way — ``create_label_image`` scales the text down to fit.
     """
@@ -249,6 +254,12 @@ def max_name():
     except ValueError:
         return MAX_NAME
     return min(max(wert, 1), 40)
+
+
+# Karte 1655: Welcher Wert gilt, gehoert ins Log — sichtbar beim Start statt versteckt
+# hinter einer Messung. Loggt bei jedem Modul-Import (auch Test-Neuladen): bewusst, der
+# Preis ist kleiner als ein stummer falscher Wert.
+app.logger.info("MAX_NAME=%d (Vorgabe 40, per Umgebung ueberschreibbar)", max_name())
 
 
 def _geclaimt() -> bool:
